@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>جسر الموقع - PhotoFrame</title>
+<style>
+  body{margin:0;background:#0b0b0e;color:#eee;font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;padding:24px;gap:16px}
+  h1{font-size:20px;margin:8px 0}
+  button{font-size:20px;padding:16px 28px;border-radius:14px;border:0;background:#ffc83c;color:#111;font-weight:700;width:100%;max-width:360px}
+  button:disabled{opacity:.4}
+  .box{background:#18181d;border-radius:14px;padding:14px 18px;width:100%;max-width:360px;line-height:1.9;font-size:16px}
+  .ok{color:#6f6}.bad{color:#f77}
+</style>
+</head>
+<body>
+<h1>جسر الموقع لجهاز الصور</h1>
+<button id="btn">اتصل بالجهاز وابدأ</button>
+<div class="box" id="st">
+  البلوتوث: <span id="bt" class="bad">غير متصل</span><br>
+  الموقع: <span id="gp" class="bad">—</span><br>
+  الاتجاه: <span id="hd">—</span><br>
+  السرعة: <span id="sp">—</span><br>
+  آخر إرسال: <span id="tx">—</span>
+</div>
+<div class="box" style="font-size:14px;color:#aaa">
+  افتح هالصفحة في Chrome على الأندرويد (أو Bluefy على الآيفون)، واترك الشاشة شغالة. بعد الاتصال شغّل الرادار أو البوصلة في الجهاز.
+</div>
+<script>
+const NUS="6e400001-b5a3-f393-e0a9-e50e24dcca9e", RX="6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+let rx=null, dev=null, pos=null, compass=null, lastSend=0, wake=null, timer=null;
+const $=id=>document.getElementById(id);
+function set(id,t,cls){const e=$(id);e.textContent=t;if(cls!==undefined)e.className=cls;}
+function onOrient(e){
+  if(typeof e.webkitCompassHeading==="number") compass=e.webkitCompassHeading;
+  else if(e.absolute&&e.alpha!=null) compass=(360-e.alpha)%360;
+}
+async function startSensors(){
+  try{ if(typeof DeviceOrientationEvent!=="undefined"&&DeviceOrientationEvent.requestPermission){ await DeviceOrientationEvent.requestPermission(); } }catch(e){}
+  window.addEventListener("deviceorientationabsolute",onOrient,true);
+  window.addEventListener("deviceorientation",onOrient,true);
+  navigator.geolocation.watchPosition(p=>{pos=p;set("gp",p.coords.latitude.toFixed(4)+" , "+p.coords.longitude.toFixed(4),"ok");},
+    e=>set("gp","خطأ: "+e.message,"bad"),{enableHighAccuracy:true,maximumAge:1000,timeout:20000});
+  try{ wake=await navigator.wakeLock.request("screen"); }catch(e){}
+}
+function heading(){
+  if(!pos) return null;
+  const c=pos.coords, spd=c.speed||0;
+  if(c.heading!=null&&!isNaN(c.heading)&&spd>1.5) return c.heading;   // أثناء الحركة: اتجاه الـGPS
+  return compass;                                                       // واقف: حساس الجوال
+}
+async function tick(){
+  if(!rx||!pos) return;
+  const c=pos.coords, h=heading(), kmh=Math.round((c.speed||0)*3.6);
+  set("hd",h==null?"—":Math.round(h)+"°"); set("sp",kmh+" km/h");
+  const line="gps "+c.latitude.toFixed(4)+" "+c.longitude.toFixed(4)+" "+(h==null?-1:Math.round(h))+" "+kmh;
+  try{ await rx.writeValueWithoutResponse(new TextEncoder().encode(line)); set("tx",new Date().toLocaleTimeString()); }
+  catch(e){ set("bt","انقطع: "+e.message,"bad"); }
+}
+async function connect(){
+  if(!navigator.bluetooth){ alert("هذا المتصفح ما يدعم Web Bluetooth. استخدم Chrome على الأندرويد."); return; }
+  $("btn").disabled=true;
+  try{
+    dev=await navigator.bluetooth.requestDevice({filters:[{namePrefix:"Photo"}],optionalServices:[NUS]});
+    dev.addEventListener("gattserverdisconnected",()=>{set("bt","انقطع، أعيد المحاولة...","bad");setTimeout(reconnect,2000);});
+    await reconnect();
+    await startSensors();
+    if(!timer) timer=setInterval(tick,1000);
+  }catch(e){ set("bt","فشل: "+e.message,"bad"); $("btn").disabled=false; }
+}
+async function reconnect(){
+  try{
+    const s=await dev.gatt.connect(), svc=await s.getPrimaryService(NUS);
+    rx=await svc.getCharacteristic(RX); set("bt","متصل","ok");
+  }catch(e){ set("bt","فشل: "+e.message,"bad"); setTimeout(reconnect,3000); }
+}
+$("btn").onclick=connect;
+</script>
+</body>
+</html>
